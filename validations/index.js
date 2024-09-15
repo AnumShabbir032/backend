@@ -17,7 +17,7 @@ const validateUserInput = (username, email, password) => {
       errors.push('Password must be at least 8 characters long and include an uppercase letter, a lowercase letter, and a number.');
     }
 
-  return errora;
+  return errors;
 }
 
 export default validateUserInput
