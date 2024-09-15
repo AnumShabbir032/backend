@@ -13,7 +13,6 @@ import path from "path";
 // import cors from "cors";
 import crypto from 'crypto'; 
 import nodemailer  from 'nodemailer';
-import pkg from 'bcryptjs';
 
 
 
