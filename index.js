@@ -10,7 +10,11 @@ import jwt from "jsonwebtoken";
 import authMiddleware from "./middlewares/index.js";
 import multer from "multer";
 import path from "path";
-import cors from "cors";
+// import cors from "cors";
+import crypto from 'crypto'; 
+import nodemailer  from 'nodemailer';
+import pkg from 'bcryptjs';
+
 
 
 
@@ -85,6 +89,8 @@ app.post('/upload', (req, res) => {
 });
 
 // Create APi for Register User
+
+// Sign Up API
 
 app.post("/register", async (req, res) => {
   const { username, email, password, contact, gender, dob } = req.body;
@@ -163,6 +169,9 @@ app.post("/register", async (req, res) => {
     res.status(500).json({ message: "Server Error" });
   }
 });
+
+// Sign In API
+
 app.post("/login", async (req, res) => {
   const { email, password } = req.body;
 
@@ -210,41 +219,201 @@ app.post("/login", async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 });
+
+
 app.get("/user", authMiddleware, (req, res) => {
     res.status(200).json({
       user: req.user,
     });
   });
-app.put("/user", authMiddleware, async (req, res) => {
-    const { username, email, profilePicture, dob, gender, contact } = req.body;
-  
-    try {
-      const updatedFields = {};
-      if (username) updatedFields.username = username;
-      if (gender) updatedFields.gender = gender;
-      if (email) updatedFields.email = email;
-      if (profilePicture) updatedFields.profilePicture = profilePicture;
-      if (dob) updatedFields.dob = dob;
-      if (contact) updatedFields.contact = contact;
-  
-      const updatedUser = await User.findByIdAndUpdate(
-        req.user._id, 
-        { $set: updatedFields },
-        { new: true, runValidators: true } 
-      ).select("-password"); 
-  
-      if (!updatedUser) {
-        return res.status(404).json({ message: "User not found" });
+
+// Update User
+
+app.put("/user", authMiddleware, (req, res) => {
+    upload.single("profilePicture")(req, res, async (err) => {
+      if (err instanceof multer.MulterError) {
+        return res.status(400).json({
+          error: "There was an error processing your upload. Please try again.",
+        });
+      } else if (err) {
+        return res.status(400).json({
+          error: "An unknown error occurred during the upload.",
+        });
       }
   
-      res
-        .status(200)
-        .json({ message: "User updated successfully", user: updatedUser });
-    } catch (err) {
-      console.error(err.message);
-      res.status(500).json({ message: "Server error" });
-    }
+      const { username, email, dob, gender, contact } = req.body;
+  
+      let profilePicture = req.file ?` http://localhost:${PORT}/uploads/${req.file.filename} `: undefined;
+  
+      try {
+        const updatedFields = {};
+        if (username) updatedFields.username = username;
+        if (gender) updatedFields.gender = gender;
+        if (email) updatedFields.email = email;
+        if (profilePicture) updatedFields.profilePicture = profilePicture;
+        if (dob) updatedFields.dob = dob;
+        if (contact) updatedFields.contact = contact;
+  
+        const updatedUser = await User.findByIdAndUpdate(
+          req.user._id,
+          { $set: updatedFields },
+          { new: true, runValidators: true }
+        );
+  
+        if (!updatedUser) {
+          return res.status(404).json({ message: "User not found" });
+        }
+  
+        res.status(200).json({
+          message: "User updated successfully",
+          updatedUser,
+        });
+      } catch (err) {
+        console.error(err.message);
+        res.status(500).json({ message: "Server error" });
+      }
+    });
   });
+
+// Forget-Password API
+
+app.post("/forget-password", async (req, res) => {
+  const { email } = req.body;
+  const tokenExpiryDuration = 3600 * 1000; // 1 hour in milliseconds
+
+  // Generate a random token and set expiration time
+  const token = crypto.randomBytes(32).toString("hex");
+  const expirationTime = Date.now() + tokenExpiryDuration;
+
+  try {
+    // Check if email is provided
+    if (!email) {
+      return res.status(400).json({ message: "Email is required" });
+    }
+
+    // Check if the user exists
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(400).json({ message: "Invalid email" });
+    }
+
+    // Save the generated token and expiration in the database
+    await User.findByIdAndUpdate(
+      user._id,
+      { $set: { 
+        resetToken: token,
+        resetTokenExpiry: expirationTime 
+      } 
+    },
+      { new: true, runValidators: true }
+    );
+
+    // Create transporter for sending email
+    const transporter = nodemailer.createTransport({
+      service: "gmail",
+      auth: {
+        user: "aa1565627726@gmail.com",
+        pass: "rjml ldzx kqhn anuc", 
+      },
+    });
+
+    // Send the token to the user's email
+    const mailOptions = {
+      from: '"WebVibes" <aa1565627726@gmail.com>',
+      to: "anumshabbir032@gmail.com",  // Send the email to the user's email
+      subject: "Password Reset Token",
+      text: `Here is your password reset token: ${token}`, // Send the generated token
+    };
+
+    // Send email and handle potential errors
+    transporter.sendMail(mailOptions, function (error, info) {
+      if (error) {
+        console.log(error);
+        return res.status(500).json({ message: "Failed to send email" });
+      } else {
+        console.log("Email sent: " + info.response);
+        return res.status(200).json({ message: "Token sent to email" });
+      }
+    });
+  } catch (err) {
+    console.error(err.message);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+// Verify Token API
+
+app.post("/verify-token", async (req, res) => {
+  const { token } = req.body;
+
+  try {
+    if (!token) {
+      return res.status(400).json({ message: "Token is required" });
+    }
+
+    // Find user by reset token
+    const user = await User.findOne({ resetToken: token });
+
+    if (!user) {
+      return res.status(400).json({ message: "Invalid token" });
+    }
+
+    // Check if the token has expired
+    if (Date.now() > user.resetTokenExpiry) {
+      return res.status(400).json({ message: "Token has expired" });
+    }
+
+    // Token is valid, respond with success
+    return res.status(200).json({ message: "Token is valid", userId: user._id });
+
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+// Reset Password API
+
+app.post("/reset-password", async (req, res) => {
+  const { token, newPassword } = req.body;
+
+  try {
+    // Check if token and newPassword are provided
+    if (!token || !newPassword) {
+      return res
+        .status(400)
+        .json({ message: "Token and new password are required" });
+    }
+
+    // Find the user by reset token
+    const user = await User.findOne({ resetToken: token });
+
+    if (!user) {
+      return res.status(400).json({ message: "Invalid token" });
+    }
+
+    // Check if the token has expired
+    if (Date.now() > user.resetTokenExpiry) {
+      return res.status(400).json({ message: "Token has expired" });
+    }
+
+    // Hash the new password and update it
+    const hashedPassword = await hashPassword(newPassword, 10);
+
+    // Update the user's password and clear the reset token and expiry
+    await User.findByIdAndUpdate(user._id, {
+      password: hashedPassword,
+      resetToken: null,
+      resetTokenExpiry: null,
+    });
+
+    return res.status(200).json({ message: "Password successfully reset" });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
 
 
 
